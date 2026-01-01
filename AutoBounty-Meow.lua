@@ -137,24 +137,7 @@ local function ExecuteCombo(Enemy)
 end
 
 --------------------------------------------------------------------------------
--- 4. GLOBAL FIX SYSTEM (CAMERA & MOVEMENT)
---------------------------------------------------------------------------------
-local function GlobalFixSystem()
-    RunService.Stepped:Connect(function()
-        pcall(function()
-            if IsAlive(LocalPlayer) then
-                if Camera.CameraType ~= Enum.CameraType.Custom then
-                    Camera.CameraType = Enum.CameraType.Custom
-                end
-                Camera.CameraSubject = LocalPlayer.Character.Humanoid
-                if LocalPlayer.Character.Humanoid.Sit then LocalPlayer.Character.Humanoid.Sit = false end
-            end
-        end)
-    end)
-end
-
---------------------------------------------------------------------------------
--- 5. UI SYSTEM (GIỮ NGUYÊN DỮ LIỆU)
+-- 5. UI SYSTEM (GIỮ NGUYÊN DỮ LIỆU + THÊM NÚT HIDE UI)
 --------------------------------------------------------------------------------
 local function CreateStatusUI()
     for _, child in pairs(CoreGui:GetChildren()) do
@@ -163,19 +146,45 @@ local function CreateStatusUI()
 
     local ScreenGui = Instance.new("ScreenGui", CoreGui)
     ScreenGui.Name = "AutoBountyByMeowUI"
+    ScreenGui.ResetOnSpawn = false
     
     local MainFrame = Instance.new("Frame", ScreenGui)
     MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
     MainFrame.Position = UDim2.new(0, 20, 0, 20)
     MainFrame.Size = UDim2.new(0, 280, 0, 140)
+    MainFrame.ClipsDescendants = true
     Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
+    -- NÚT HIDE UI
+    local HideBtn = Instance.new("TextButton", MainFrame)
+    HideBtn.Size = UDim2.new(0, 30, 0, 30)
+    HideBtn.Position = UDim2.new(1, -35, 0, 5)
+    HideBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    HideBtn.Text = "-"
+    HideBtn.TextColor3 = Color3.new(1, 1, 1)
+    HideBtn.Font = Enum.Font.GothamBold
+    HideBtn.TextSize = 20
+    Instance.new("UICorner", HideBtn).CornerRadius = UDim.new(0, 5)
+
+    local isHidden = false
+    HideBtn.MouseButton1Click:Connect(function()
+        isHidden = not isHidden
+        if isHidden then
+            MainFrame:TweenSize(UDim2.new(0, 280, 0, 40), "Out", "Quart", 0.3, true)
+            HideBtn.Text = "+"
+        else
+            MainFrame:TweenSize(UDim2.new(0, 280, 0, 140), "Out", "Quart", 0.3, true)
+            HideBtn.Text = "-"
+        end
+    end)
+
     local Title = Instance.new("TextLabel", MainFrame)
-    Title.Size = UDim2.new(1, 0, 0, 35)
+    Title.Size = UDim2.new(1, -40, 0, 35)
+    Title.Position = UDim2.new(0, 10, 0, 0)
     Title.Font = Enum.Font.GothamBold
-    Title.Text = "  AUTO BOUNTY BY MEOW"
+    Title.Text = "AUTO BOUNTY BY MEOW"
     Title.TextColor3 = Color3.fromRGB(255, 150, 0)
-    Title.TextSize = 16
+    Title.TextSize = 14
     Title.TextXAlignment = Enum.TextXAlignment.Left
     Title.BackgroundTransparency = 1
 
@@ -195,6 +204,7 @@ local function CreateStatusUI()
     local TimeLabel = CreateLabel(70)
     local StatusLabel = CreateLabel(95)
 
+    -- Cập nhật dữ liệu liên tục
     task.spawn(function()
         local start = tick()
         while task.wait(1) do
@@ -203,23 +213,46 @@ local function CreateStatusUI()
                     BountyLabel.Text = "💰 Bounty: " .. string.format("%.1fM", LocalPlayer.leaderstats["Bounty/Honor"].Value/1000000)
                 end
                 local d = tick()-start
-                TimeLabel.Text = string.format("⏳ Server Time: %02d:%02d", d/60, d%60)
+                TimeLabel.Text = string.format("⏳ Time in Server: %02d:%02d:%02d", math.floor(d/3600), math.floor((d%3600)/60), math.floor(d%60))
             end)
         end
     end)
+    
     return StatusLabel
 end
+--------------------------------------------------------------------------------
+-- 4. GLOBAL FIX SYSTEM (CAMERA & MOVEMENT)
+--------------------------------------------------------------------------------
+local function GlobalFixSystem()
+    RunService.Stepped:Connect(function()
+        pcall(function()
+            if IsAlive(LocalPlayer) then
+                -- FIX CAMERA
+                if Camera.CameraType ~= Enum.CameraType.Custom then
+                    Camera.CameraType = Enum.CameraType.Custom
+                end
+                Camera.CameraSubject = LocalPlayer.Character.Humanoid
+                
+                -- ANTI-SIT
+                if LocalPlayer.Character.Humanoid.Sit then 
+                    LocalPlayer.Character.Humanoid.Sit = false 
+                end
 
-local StatusText = CreateStatusUI()
+                -- NOCLIP: Cho phép đi xuyên mọi vật cản khi đang đi săn
+                for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end
 
 --------------------------------------------------------------------------------
--- 6. MAIN LOGIC (START HUNT - SPEED 300 & FIX FLIGHT)
+-- 6. MAIN LOGIC (FIX LỖI COMBAT HOP + TELEPORT Y KHI HOP)
 --------------------------------------------------------------------------------
 local function StartAutoBounty()
     local Setting = getgenv().Setting
     GlobalFixSystem()
 
-    -- Tự động chọn phe để kích hoạt kỹ năng
     local TeamName = (Setting["Team"] == "Pirate") and "Pirates" or "Marines"
     repeat 
         task.wait(0.5)
@@ -227,81 +260,85 @@ local function StartAutoBounty()
     until LocalPlayer.Team ~= nil
 
     task.spawn(function()
-        while task.wait(0.5) do
+        while task.wait(1) do 
             local FoundTarget = false
-            -- Lấy danh sách người chơi và bắt đầu quét mục tiêu
-            local AllPlayers = Players:GetPlayers()
             
-            for _, Enemy in pairs(AllPlayers) do
-                -- Kiểm tra nếu mục tiêu hợp lệ (đã fix không chọn người trong Safezone ở hàm IsValidTarget)
+            -- Quét tìm mục tiêu
+            for _, Enemy in pairs(Players:GetPlayers()) do
                 if Enemy ~= LocalPlayer and IsValidTarget(Enemy) then
                     FoundTarget = true
                     StatusText.Text = "Status: ⚔️ Hunting -> " .. Enemy.Name
-                    local HuntStart = tick()
                     
+                    local BV = Instance.new("BodyVelocity")
+                    BV.Velocity = Vector3.new(0, 0, 0)
+                    BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+                    BV.Parent = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+                    local HuntStart = tick()
                     repeat
                         task.wait()
-                        -- Dừng săn nếu mình chết hoặc địch vào Safezone/thoát game
                         if not IsAlive(LocalPlayer) or not IsValidTarget(Enemy) or not Enemy.Parent then break end
 
-                        -- LOGIC HỒI MÁU (Nếu bạn bật SafeZone Healing trong Setting)
-                        if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then
-                            StatusText.Text = "Status: 🏥 Healing..."
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position.X, Setting.SafeZone["Teleport Y"], LocalPlayer.Character.HumanoidRootPart.Position.Z)
-                            repeat task.wait(0.5) until LocalPlayer.Character.Humanoid.Health >= Setting.SafeZone.MaxHealth
-                            break 
-                        end
+                        if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then break end
 
-                        -- DI CHUYỂN ÁP SÁT VỚI TỐC ĐỘ 300 (FIX LỖI KHÔNG BAY)
-                        local TargetCF = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 4)
+                        local TargetCF = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 5)
                         local Dist = (LocalPlayer.Character.HumanoidRootPart.Position - TargetCF.Position).Magnitude
-                        
-                        -- Ép Tween chạy liên tục mỗi Frame để bot không bao giờ bị khựng
                         TweenService:Create(LocalPlayer.Character.HumanoidRootPart, TweenInfo.new(Dist/300, Enum.EasingStyle.Linear), {CFrame = TargetCF}):Play()
 
-                        -- Bật Haki nếu chưa bật
-                        if not LocalPlayer.Character:FindFirstChild("HasBuso") then 
-                            ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") 
-                        end
-                        
-                        -- Tự động tung chiêu khi khoảng cách đủ gần
-                        if Dist < 40 or LocalPlayer.PlayerGui.Main.InCombat.Visible then
-                            -- Bật tộc V3/V4 nếu có trong Setting
-                            if Setting["Race V3"].Enable then VirtualInputManager:SendKeyEvent(true, "T", false, game) end
-                            if Setting["Race V4"].Enable and LocalPlayer.PlayerGui.Main.Awakening.Gauge.Size.X.Scale >= 1 then 
-                                VirtualInputManager:SendKeyEvent(true, "Y", false, game) 
-                            end
-                            
-                            -- Thực hiện Combo kỹ năng và Dragon Soru
+                        if Dist < 50 or LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, Enemy.Character.HumanoidRootPart.Position)
                             ExecuteCombo(Enemy)
                         end
 
-                        -- Chống kẹt một mục tiêu quá lâu (Target Time)
                         if (tick() - HuntStart) > Setting["Target Time"] then break end
                     until not IsValidTarget(Enemy)
                     
-                    if FoundTarget then break end -- Sau khi xong 1 người thì quay lại quét danh sách mới
+                    if BV then BV:Destroy() end
+                    if FoundTarget then break end
                 end
             end
 
-            -- TỰ ĐỘNG ĐỔI SERVER NẾU KHÔNG CÒN AI ĐỂ SĂN
-            if not FoundTarget and Setting.Misc.AutoHopServer and not LocalPlayer.PlayerGui.Main.InCombat.Visible then
-                StatusText.Text = "Status: 🌎 No Targets. Hopping..."
-                SafeCall(function()
-                    local Servers = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
-                    for _, s in pairs(Servers.data) do
-                        if s.playing < s.maxPlayers and s.id ~= game.JobId then
-                            TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
-                            break
+            -- LOGIC HOP SERVER + TELEPORT Y AN TOÀN
+            if not FoundTarget and Setting.Misc.AutoHopServer then
+                StatusText.Text = "Status: 🔍 No Targets. Checking Combat..."
+                task.wait(3) -- Chờ combat ngắn
+                
+                if not LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                    -- TELEPORT Y: Bay lên cao trước khi thoát server
+                    StatusText.Text = "Status: 🛫 Flying Up Before Hop..."
+                    pcall(function()
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(
+                            LocalPlayer.Character.HumanoidRootPart.Position.X, 
+                            Setting.SafeZone["Teleport Y"], 
+                            LocalPlayer.Character.HumanoidRootPart.Position.Z
+                        )
+                    end)
+                    task.wait(1.5) -- Đợi bay lên ổn định rồi mới Hop
+
+                    StatusText.Text = "Status: 🌎 Finding New Server..."
+                    
+                    local function SafeHop()
+                        local Http = game:GetService("HttpService")
+                        local Api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100"
+                        local Success, Result = pcall(function() return Http:JSONDecode(game:HttpGet(Api)) end)
+                        
+                        if Success and Result and Result.data then
+                            for _, s in pairs(Result.data) do
+                                if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                                    TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
+                                    return
+                                end
+                            end
                         end
                     end
-                end)
-                task.wait(5)
+                    SafeHop()
+                else
+                    StatusText.Text = "Status: 🛡️ In Combat. Stay here..."
+                end
             end
         end
     end)
 end
-
 
 --------------------------------------------------------------------------------
 -- 7. EXECUTION
