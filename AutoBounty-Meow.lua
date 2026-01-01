@@ -1,12 +1,12 @@
 --[[
     SCRIPT NAME: Auto Bounty by Meow
     AUTHOR: Meow
-    VERSION: 1.5.0 (Stable/Robust)
-    DESCRIPTION: Fully optimized auto bounty hunter with Anti-Sus, Auto Haki, Auto Race V3/V4, Safezone logic.
+    VERSION: 2.2.0 (Dragon Boost & Full Fix)
+    DESCRIPTION: PC Style Skills, Dragon Soru Boost, Anti-Void, Auto Join Team.
 ]]
 
 --------------------------------------------------------------------------------
--- 1. SERVICES & VARIABLES (KHỞI TẠO DỊCH VỤ)
+-- 1. SERVICES & VARIABLES
 --------------------------------------------------------------------------------
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -16,19 +16,18 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
+local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
--- Đợi game load hoàn toàn
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
 --------------------------------------------------------------------------------
--- 2. SAFETY FUNCTIONS (HÀM BẢO VỆ)
+-- 2. SAFETY & UTILITY FUNCTIONS
 --------------------------------------------------------------------------------
--- Hàm thực thi an toàn (tránh crash script)
 local function SafeCall(func, ...)
     local success, result = pcall(func, ...)
     if not success then
@@ -37,7 +36,6 @@ local function SafeCall(func, ...)
     return success, result
 end
 
--- Hàm kiểm tra nhân vật sống
 local function IsAlive(plr)
     if plr and plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character:FindFirstChild("HumanoidRootPart") then
         if plr.Character.Humanoid.Health > 0 then
@@ -47,338 +45,260 @@ local function IsAlive(plr)
     return false
 end
 
---------------------------------------------------------------------------------
--- 3. UI SYSTEM (GIAO DIỆN TRẠNG THÁI CHI TIẾT)
---------------------------------------------------------------------------------
-local function CreateStatusUI()
-    -- Xóa UI cũ nếu có để tránh trùng lặp
-    for _, child in pairs(CoreGui:GetChildren()) do
-        if child.Name == "AutoBountyByMeowUI" then
-            child:Destroy()
-        end
+-- Bộ lọc mục tiêu thông minh (Fix lỗi bay ra biển/safezone)
+local function IsValidTarget(Enemy)
+    if not IsAlive(Enemy) then return false end
+    
+    local Character = Enemy.Character
+    -- 1. Check Safezone/ForceField
+    if Character:FindFirstChild("SafeZone") or Character:FindFirstChild("ForceField") then
+        return false
+    end
+    
+    -- 2. Check tọa độ (Chống bay ra hư vô/biển quá xa)
+    local RootPos = Character.HumanoidRootPart.Position
+    if RootPos.Y > 10000 or RootPos.Y < -500 or (RootPos).Magnitude > 60000 then
+        return false
     end
 
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "AutoBountyByMeowUI"
-    ScreenGui.Parent = CoreGui
-    
-    local MainFrame = Instance.new("Frame")
-    MainFrame.Name = "MainFrame"
-    MainFrame.Parent = ScreenGui
-    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    MainFrame.BorderSizePixel = 0
-    MainFrame.Position = UDim2.new(0, 20, 0, 20)
-    MainFrame.Size = UDim2.new(0, 300, 0, 150)
-    
-    -- Thêm bo góc cho đẹp
-    local UICorner = Instance.new("UICorner")
-    UICorner.CornerRadius = UDim.new(0, 8)
-    UICorner.Parent = MainFrame
+    -- 3. Check SeaLevel (Chỉ đánh người đã vào biển)
+    local SeaLevel = Enemy:GetAttribute("SeaLevel") or 0
+    if SeaLevel <= 0 then return false end
 
-    local TitleLabel = Instance.new("TextLabel")
-    TitleLabel.Parent = MainFrame
-    TitleLabel.BackgroundColor3 = Color3.fromRGB(255, 170, 0) -- Màu cam
-    TitleLabel.BackgroundTransparency = 0.8
-    TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-    TitleLabel.Font = Enum.Font.GothamBold
-    TitleLabel.Text = "  AUTO BOUNTY BY MEOW"
-    TitleLabel.TextColor3 = Color3.fromRGB(255, 170, 0)
-    TitleLabel.TextSize = 18
-    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
-    local TitleCorner = Instance.new("UICorner")
-    TitleCorner.CornerRadius = UDim.new(0, 8)
-    TitleCorner.Parent = TitleLabel
-
-    -- Hàm tạo dòng thông tin
-    local function CreateInfoLabel(name, yPos, defaultText)
-        local Label = Instance.new("TextLabel")
-        Label.Name = name
-        Label.Parent = MainFrame
-        Label.BackgroundTransparency = 1
-        Label.Position = UDim2.new(0, 10, 0, yPos)
-        Label.Size = UDim2.new(1, -20, 0, 25)
-        Label.Font = Enum.Font.GothamSemibold
-        Label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Label.TextSize = 14
-        Label.TextXAlignment = Enum.TextXAlignment.Left
-        Label.Text = defaultText
-        return Label
-    end
-
-    local BountyLabel = CreateInfoLabel("BountyLabel", 40, "Bounty: Loading...")
-    local TimeLabel = CreateInfoLabel("TimeLabel", 70, "Time in Server: 00:00")
-    local StatusLabel = CreateInfoLabel("StatusLabel", 100, "Status: Idle")
-
-    -- Logic cập nhật UI
-    task.spawn(function()
-        local startTime = tick()
-        while task.wait(1) do
-            SafeCall(function()
-                -- Cập nhật Bounty
-                if LocalPlayer:FindFirstChild("leaderstats") and LocalPlayer.leaderstats:FindFirstChild("Bounty/Honor") then
-                    local val = LocalPlayer.leaderstats["Bounty/Honor"].Value
-                    BountyLabel.Text = "💰 Current Bounty: " .. string.format("%.1fM", val / 1000000)
-                end
-                
-                -- Cập nhật Thời gian
-                local currentTime = tick() - startTime
-                local minutes = math.floor(currentTime / 60)
-                local seconds = math.floor(currentTime % 60)
-                TimeLabel.Text = string.format("⏳ Time in Server: %02d:%02d", minutes, seconds)
-            end)
-        end
-    end)
-
-    return StatusLabel
+    return true
 end
 
-local StatusText = CreateStatusUI()
-
 --------------------------------------------------------------------------------
--- 4. COMBAT SUPPORT FUNCTIONS (HỖ TRỢ CHIẾN ĐẤU)
+-- 3. DRAGON SORU & COMBO SYSTEM (FIX KHÔNG DÙNG CHIÊU)
 --------------------------------------------------------------------------------
-
--- Tự động bật Haki (Vũ trang & Quan sát)
-local function AutoActivateHaki()
-    SafeCall(function()
+local function DragonSoruBoost(enemyPart)
+    pcall(function()
         if not IsAlive(LocalPlayer) then return end
+        local Root = LocalPlayer.Character.HumanoidRootPart
+        -- Hướng mặt về phía đối thủ để Soru chính xác
+        Root.CFrame = CFrame.new(Root.Position, enemyPart.Position)
         
-        -- Bật Buso Haki (Vũ trang)
-        if not LocalPlayer.Character:FindFirstChild("HasBuso") then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
-        end
-
-        -- Bật Ken Haki (Quan sát) - Dùng phím E
-        if not LocalPlayer.Character:FindFirstChild("KenHaki") then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end
+        -- Nhấn phím R (Soru) lướt thẳng vào người địch để lấy buff dame tộc Rồng
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+        task.wait(0.01)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+        
+        -- Ép sát tọa độ để kích hoạt nội tại tộc
+        Root.CFrame = enemyPart.CFrame
     end)
 end
 
--- Tự động bật Tộc (Race V3 / V4)
-local function AutoActivateRace()
-    SafeCall(function()
-        if not IsAlive(LocalPlayer) then return end
-        local Setting = getgenv().Setting
+local function ExecuteCombo(Enemy)
+    local Setting = getgenv().Setting
+    local ComboList = {}
 
-        -- Chỉ bật khi đang trong trạng thái In Combat
-        if LocalPlayer.PlayerGui.Main.InCombat.Visible and Setting["Race V4"].Enable then
-            
-            -- 1. Luôn spam phím T để kích hoạt Skill V3 (Buff giáp/dmg)
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
-            
-            -- 2. Kiểm tra thanh nộ để kích hoạt V4 (Phím Y)
-            local AwakeningUI = LocalPlayer.PlayerGui.Main.Awakening
-            if AwakeningUI and AwakeningUI.Gauge.Size.X.Scale >= 1 then
-                StatusText.Text = "Status: 🔥 Activating Race V4 (Y)!"
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+    -- Lấy danh sách kỹ năng từ Setting
+    for weaponType, data in pairs(Setting.Weapons) do
+        if data.Enable then
+            for skillKey, skillData in pairs(data.Skills) do
+                if skillData.Enable then
+                    table.insert(ComboList, {
+                        Weapon = weaponType,
+                        Key = skillKey,
+                        Number = skillData.Number,
+                        Hold = skillData.HoldTime
+                    })
+                end
             end
         end
-    end)
+    end
+
+    -- Sắp xếp theo thứ tự ưu tiên (Number)
+    table.sort(ComboList, function(a, b) return a.Number < b.Number end)
+
+    for _, skill in pairs(ComboList) do
+        if not IsValidTarget(Enemy) then break end
+        
+        -- Dragon Soru Boost trước mỗi đòn đánh
+        DragonSoruBoost(Enemy.Character.HumanoidRootPart)
+
+        -- Tìm và trang bị vũ khí
+        local Tool = nil
+        for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if (skill.Weapon == "Melee" and v:GetAttribute("Melee")) or 
+               (skill.Weapon == "Sword" and v.ToolTip == "Sword") or
+               (skill.Weapon == "Blox Fruit" and v.ToolTip == "Blox Fruit") or
+               (skill.Weapon == "Gun" and v.ToolTip == "Gun") then
+                Tool = v
+                break
+            end
+        end
+
+        if Tool then
+            if not LocalPlayer.Character:FindFirstChild(Tool.Name) then
+                LocalPlayer.Character.Humanoid:EquipTool(Tool)
+            end
+            -- Nhấn phím kỹ năng (PC Style)
+            VirtualInputManager:SendKeyEvent(true, skill.Key, false, game)
+            if skill.Hold > 0 then task.wait(skill.Hold) end
+            VirtualInputManager:SendKeyEvent(false, skill.Key, false, game)
+        end
+        task.wait(0.05)
+    end
+    
+    -- Auto Click (Chuột trái)
+    if Setting["Method Click"]["Click Melee"] then
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+    end
 end
 
--- Fix lỗi di chuyển bất thường (Anti-Sus)
-local function ActivateAntiSus()
-    RunService.Stepped:Connect(function()
+--------------------------------------------------------------------------------
+-- 4. GLOBAL FIX SYSTEM (CAMERA & MOVEMENT)
+--------------------------------------------------------------------------------
+local function GlobalFixSystem()
+    RunService.RenderStepped:Connect(function()
         SafeCall(function()
             if IsAlive(LocalPlayer) then
-                -- Ép nhân vật di chuyển nhẹ về phía trước để Server ghi nhận input sạch
+                Camera.CameraType = Enum.CameraType.Custom
+                if LocalPlayer.Character.Humanoid.Sit then
+                    LocalPlayer.Character.Humanoid.Sit = false
+                end
                 LocalPlayer.Character.Humanoid:Move(Vector3.new(0, 0, -1), true)
             end
         end)
     end)
 end
 
--- Hàm bay (Tween) đến mục tiêu
-local function TweenToPosition(targetCFrame)
-    if not IsAlive(LocalPlayer) then return end
-    
-    local RootPart = LocalPlayer.Character.HumanoidRootPart
-    local Distance = (RootPart.Position - targetCFrame.Position).Magnitude
-    
-    -- Tốc độ bay: 300 stud/s (Có thể chỉnh chậm lại nếu hay bị kick)
-    local Speed = 300 
-    local TweenInfoData = TweenInfo.new(Distance / Speed, Enum.EasingStyle.Linear)
-    
-    local Tween = TweenService:Create(RootPart, TweenInfoData, {CFrame = targetCFrame})
-    Tween:Play()
-    
-    -- Nếu gần đến nơi (dưới 10 stud) thì hủy tween để combat
-    return Tween
-end
+--------------------------------------------------------------------------------
+-- 5. UI SYSTEM
+--------------------------------------------------------------------------------
+local function CreateStatusUI()
+    for _, child in pairs(CoreGui:GetChildren()) do
+        if child.Name == "AutoBountyByMeowUI" then child:Destroy() end
+    end
 
--- Hàm Né Skill (Dodge)
-local function PerformDodge(targetPlayer)
-    if not IsAlive(LocalPlayer) or not IsAlive(targetPlayer) then return end
+    local ScreenGui = Instance.new("ScreenGui", CoreGui)
+    ScreenGui.Name = "AutoBountyByMeowUI"
     
-    SafeCall(function()
-        local RootPart = LocalPlayer.Character.HumanoidRootPart
-        -- Vọt lên trời 500m
-        RootPart.CFrame = RootPart.CFrame * CFrame.new(0, 500, 0)
-        task.wait(0.2) 
-        -- Hạ xuống ngay sau lưng địch
-        if IsAlive(targetPlayer) then
-            RootPart.CFrame = targetPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+    local MainFrame = Instance.new("Frame", ScreenGui)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    MainFrame.Position = UDim2.new(0, 20, 0, 20)
+    MainFrame.Size = UDim2.new(0, 280, 0, 140)
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+
+    local Title = Instance.new("TextLabel", MainFrame)
+    Title.Size = UDim2.new(1, 0, 0, 35)
+    Title.Font = Enum.Font.GothamBold
+    Title.Text = "  MEOW - DRAGON EDITION"
+    Title.TextColor3 = Color3.fromRGB(255, 50, 50)
+    Title.TextSize = 16
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.BackgroundTransparency = 1
+
+    local function CreateLabel(y)
+        local l = Instance.new("TextLabel", MainFrame)
+        l.Position = UDim2.new(0, 15, 0, y)
+        l.Size = UDim2.new(1, -30, 0, 25)
+        l.Font = Enum.Font.GothamSemibold
+        l.TextColor3 = Color3.new(1, 1, 1)
+        l.TextSize = 13
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.BackgroundTransparency = 1
+        return l
+    end
+
+    local BountyLabel = CreateLabel(45)
+    local StatusLabel = CreateLabel(85)
+
+    task.spawn(function()
+        while task.wait(1) do
+            pcall(function()
+                if LocalPlayer:FindFirstChild("leaderstats") then
+                    BountyLabel.Text = "💰 Bounty: " .. string.format("%.1fM", LocalPlayer.leaderstats["Bounty/Honor"].Value/1000000)
+                end
+            end)
         end
     end)
+    return StatusLabel
 end
 
---------------------------------------------------------------------------------
--- 5. MAIN LOGIC (LOGIC CHÍNH)
---------------------------------------------------------------------------------
+local StatusText = CreateStatusUI()
 
+--------------------------------------------------------------------------------
+-- 6. MAIN LOGIC (START HUNT)
+--------------------------------------------------------------------------------
 local function StartAutoBounty()
     local Setting = getgenv().Setting
-    
-    -- 1. Vào Team
+    GlobalFixSystem()
+
+    -- Auto Join Team (Để xuất hiện các nút Skill như PC)
     local TeamName = (Setting["Team"] == "Pirate") and "Pirates" or "Marines"
-    StatusText.Text = "Status: Joining Team " .. TeamName .. "..."
-    
     repeat 
         task.wait(0.5)
-        SafeCall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", TeamName)
-        end)
+        SafeCall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", TeamName) end)
     until LocalPlayer.Team ~= nil
 
-    -- 2. Kích hoạt hệ thống hỗ trợ
-    ActivateAntiSus()
-    
-    -- 3. Vòng lặp săn mồi chính
     task.spawn(function()
         while task.wait(0.5) do
             local FoundTarget = false
-            
-            -- Duyệt qua tất cả người chơi
             for _, Enemy in pairs(Players:GetPlayers()) do
-                -- Điều kiện lọc: Khác phe (hoặc không check phe), có nhân vật, không phải mình
-                if Enemy ~= LocalPlayer and IsAlive(Enemy) then
+                if Enemy ~= LocalPlayer and IsValidTarget(Enemy) then
+                    FoundTarget = true
+                    StatusText.Text = "Status: 🔥 Hunting " .. Enemy.Name
+                    local HuntStart = tick()
                     
-                    -- Check Sea Level (Không đánh người mới lv 0)
-                    local EnemySea = Enemy:GetAttribute("SeaLevel") or 1
-                    
-                    -- Check SafeZone (Không đánh người đang trong vùng an toàn)
-                    local IsInSafeZone = Enemy.Character:FindFirstChild("SafeZone") or Enemy.Character:FindFirstChild("ForceField")
+                    repeat
+                        task.wait()
+                        if not IsAlive(LocalPlayer) or not IsValidTarget(Enemy) or not Enemy.Parent then break end
 
-                    if EnemySea > 0 and not IsInSafeZone then
+                        -- LOGIC HỒI MÁU SAFEZONE
+                        if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then
+                            StatusText.Text = "Status: 🏥 Healing..."
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position.X, Setting.SafeZone["Teleport Y"], LocalPlayer.Character.HumanoidRootPart.Position.Z)
+                            repeat task.wait(0.5) until LocalPlayer.Character.Humanoid.Health >= Setting.SafeZone.MaxHealth
+                            break 
+                        end
+
+                        -- DI CHUYỂN ÁP SÁT
+                        local TargetCF = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 4)
+                        local Dist = (LocalPlayer.Character.HumanoidRootPart.Position - TargetCF.Position).Magnitude
+                        TweenService:Create(LocalPlayer.Character.HumanoidRootPart, TweenInfo.new(Dist/180, Enum.EasingStyle.Linear), {CFrame = TargetCF}):Play()
+
+                        -- BẬT HAKI & RACE
+                        if not LocalPlayer.Character:FindFirstChild("HasBuso") then ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") end
                         
-                        FoundTarget = true
-                        StatusText.Text = "Status: ⚔️ Locked Target: " .. Enemy.Name
-                        StatusText.TextColor3 = Color3.fromRGB(255, 0, 0)
-
-                        -- Các biến kiểm soát trận đấu
-                        local StartHuntTime = tick()      -- Thời điểm bắt đầu tiếp cận
-                        local StartCombatTime = 0         -- Thời điểm bắt đầu đánh nhau thật (In Combat)
-                        local CombatActive = false        -- Đã vào combat chưa
-                        local LastDodgeTime = tick()      -- Thời điểm né chiêu cuối cùng
-
-                        -- VÒNG LẶP TẤN CÔNG (HUNTING LOOP)
-                        repeat
-                            task.wait() -- Chạy nhanh nhất có thể theo FPS
-                            
-                            -- Kiểm tra điều kiện thoát vòng lặp
-                            if not IsAlive(LocalPlayer) or not IsAlive(Enemy) or Enemy.Character:FindFirstChild("SafeZone") then 
-                                break 
+                        if LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                            if Setting["Race V3"].Enable then VirtualInputManager:SendKeyEvent(true, "T", false, game) end
+                            if Setting["Race V4"].Enable and LocalPlayer.PlayerGui.Main.Awakening.Gauge.Size.X.Scale >= 1 then 
+                                VirtualInputManager:SendKeyEvent(true, "Y", false, game) 
                             end
+                            -- THỰC HIỆN COMBO + DRAGON SORU BOOST
+                            ExecuteCombo(Enemy)
+                        end
 
-                            -- A. LOGIC HỒI MÁU (SAFEZONE RETREAT)
-                            if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then
-                                StatusText.Text = "Status: 🏥 Low Health! Retreating to SafeZone..."
-                                StatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
-                                
-                                local SafePos = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position.X, Setting.SafeZone["Teleport Y"], LocalPlayer.Character.HumanoidRootPart.Position.Z)
-                                LocalPlayer.Character.HumanoidRootPart.CFrame = SafePos
-                                
-                                -- Đứng yên đợi hồi máu
-                                repeat task.wait(0.5) until LocalPlayer.Character.Humanoid.Health >= Setting.SafeZone.MaxHealth
-                                StatusText.Text = "Status: ⚔️ Re-engaging Target..."
-                            end
-
-                            -- B. DI CHUYỂN & TẤN CÔNG
-                            -- Luôn bật Haki & Race
-                            AutoActivateHaki()
-                            AutoActivateRace()
-                            
-                            -- Bay đến đối thủ (Sau lưng 3 stud)
-                            local TargetPos = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
-                            local Tween = TweenToPosition(TargetPos)
-                            
-                            -- Nếu gần thì hủy tween để đánh cho mượt
-                            if (LocalPlayer.Character.HumanoidRootPart.Position - TargetPos.Position).Magnitude < 10 then
-                                if Tween then Tween:Cancel() end
-                                LocalPlayer.Character.HumanoidRootPart.CFrame = TargetPos
-                            end
-                            
-                            -- C. NÉ CHIÊU (DODGE)
-                            if Setting["Dodge Skill Player"] and (tick() - LastDodgeTime > 5) then
-                                PerformDodge(Enemy)
-                                LastDodgeTime = tick()
-                            end
-
-                            -- D. KIỂM SOÁT THỜI GIAN (LOGIC 20S & 2P30S)
-                            local IsInCombatUI = LocalPlayer.PlayerGui.Main.InCombat.Visible
-
-                            if not CombatActive then
-                                -- Giai đoạn chưa vào Combat
-                                if IsInCombatUI then
-                                    CombatActive = true
-                                    StartCombatTime = tick()
-                                    StatusText.Text = "Status: 🔥 In Combat with " .. Enemy.Name
-                                elseif (tick() - StartHuntTime) > Setting["Target Time"] then
-                                    StatusText.Text = "Status: ⚠️ 20s Timeout (No PvP). Skipping..."
-                                    break -- Thoát vòng lặp để tìm người khác
-                                end
-                            else
-                                -- Giai đoạn đang Combat
-                                if (tick() - StartCombatTime) > 150 then -- 150 giây = 2 phút 30
-                                    StatusText.Text = "Status: ⌛ Fight too long! Skipping..."
-                                    break
-                                end
-                            end
-
-                        until not IsAlive(Enemy) or not IsAlive(LocalPlayer)
-                        
-                        -- Nếu địch chết hoặc mất tích
-                        StatusText.Text = "Status: ✅ Target Elimination / Lost."
-                        task.wait(1)
-                    end
+                        if not LocalPlayer.PlayerGui.Main.InCombat.Visible and (tick() - HuntStart) > Setting["Target Time"] then break end
+                    until not IsValidTarget(Enemy)
                 end
-                
-                -- Nếu đã tìm thấy và xử lý xong 1 người, break ra vòng ngoài để quét lại từ đầu
                 if FoundTarget then break end
             end
 
-            -- LOGIC HOP SERVER (KHI KHÔNG TÌM THẤY AI)
-            if not FoundTarget and Setting.Misc.AutoHopServer then
-                -- Chỉ hop khi AN TOÀN (không In Combat)
-                if not LocalPlayer.PlayerGui.Main.InCombat.Visible then
-                    StatusText.Text = "Status: 🌎 Server Empty/Done. Hopping..."
-                    StatusText.TextColor3 = Color3.fromRGB(0, 255, 255)
-                    
-                    -- Đoạn code Hop Server (Sử dụng API Roblox)
-                    SafeCall(function()
-                        local PlaceId = game.PlaceId
-                        local Servers = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
-                        for _, Server in pairs(Servers.data) do
-                            if Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
-                                game:GetService("TeleportService"):TeleportToPlaceInstance(PlaceId, Server.id, LocalPlayer)
-                                break
-                            end
+            -- AUTO HOP SERVER
+            if not FoundTarget and Setting.Misc.AutoHopServer and not LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                StatusText.Text = "Status: 🌎 Server Empty. Hopping..."
+                SafeCall(function()
+                    local Servers = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
+                    for _, s in pairs(Servers.data) do
+                        if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                            TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
+                            break
                         end
-                    end)
-                    task.wait(5) -- Đợi teleport
-                else
-                    StatusText.Text = "Status: 🚫 Waiting for Combat End to Hop..."
-                end
+                    end
+                end)
+                task.wait(5)
             end
         end
     end)
 end
 
 --------------------------------------------------------------------------------
--- 6. EXECUTION (THỰC THI)
+-- 7. EXECUTION
 --------------------------------------------------------------------------------
 SafeCall(StartAutoBounty)
+
