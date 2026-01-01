@@ -248,7 +248,7 @@ local function StartAutoBounty()
                         -- FIX: Ép bay liên tục với tốc độ 350
                         local TargetCF = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 4)
                         local Dist = (LocalPlayer.Character.HumanoidRootPart.Position - TargetCF.Position).Magnitude
-                        TweenService:Create(LocalPlayer.Character.HumanoidRootPart, TweenInfo.new(Dist/350, Enum.EasingStyle.Linear), {CFrame = TargetCF}):Play()
+                        TweenService:Create(LocalPlayer.Character.HumanoidRootPart, TweenInfo.new(Dist/300, Enum.EasingStyle.Linear), {CFrame = TargetCF}):Play()
 
                         if not LocalPlayer.Character:FindFirstChild("HasBuso") then ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") end
                         
