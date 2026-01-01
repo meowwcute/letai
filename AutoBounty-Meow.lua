@@ -221,7 +221,7 @@ end
 local StatusText = CreateStatusUI()
 
 --------------------------------------------------------------------------------
--- 6. MAIN LOGIC (SỬ DỤNG BODYVELOCITY ĐỂ VỪA DI CHUYỂN VỪA BAY)
+-- 6. MAIN LOGIC (FIX LỖI KHÔNG BAY + GIỮ NÚT DI CHUYỂN)
 --------------------------------------------------------------------------------
 local function StartAutoBounty()
     local Setting = getgenv().Setting
@@ -237,37 +237,36 @@ local function StartAutoBounty()
                     FoundTarget = true
                     StatusText.Text = "Status: ⚔️ Hunting -> " .. Enemy.Name
                     
-                    -- SỬ DỤNG BODYVELOCITY ĐỂ BAY (CHO PHÉP VỪA DI CHUYỂN VỪA BAY)
+                    -- Tạo lực nâng ảo để không bị rơi khi di chuyển bằng tay
                     local BV = Instance.new("BodyVelocity")
-                    BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
                     BV.Velocity = Vector3.new(0, 0, 0)
+                    BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
                     BV.Parent = LocalPlayer.Character.HumanoidRootPart
-
-                    local BG = Instance.new("BodyGyro") -- Giữ nhân vật không bị xoay tròn lung tung
-                    BG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-                    BG.P = 3000
-                    BG.Parent = LocalPlayer.Character.HumanoidRootPart
 
                     local HuntStart = tick()
                     repeat
-                        task.wait()
+                        task.wait() -- Chạy liên tục mỗi frame
                         if not IsAlive(LocalPlayer) or not IsValidTarget(Enemy) or not Enemy.Parent then break end
+                        
+                        -- Logic Hồi máu
                         if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then break end
                         
-                        local TargetPos = Enemy.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 5)
-                        local Direction = (TargetPos - LocalPlayer.Character.HumanoidRootPart.Position)
-                        local Dist = Direction.Magnitude
+                        local Root = LocalPlayer.Character.HumanoidRootPart
+                        local EnemyRoot = Enemy.Character.HumanoidRootPart
+                        local TargetPos = EnemyRoot.Position + Vector3.new(0, 5, 2)
+                        local Dist = (Root.Position - TargetPos).Magnitude
                         
-                        -- Nếu ở xa thì bay với tốc độ 300, ở gần thì giảm tốc để combo
-                        if Dist > 10 then
-                            BV.Velocity = Direction.Unit * 300
-                            BG.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, Enemy.Character.HumanoidRootPart.Position)
-                        else
-                            BV.Velocity = Vector3.new(0, 0, 0)
+                        -- BAY ĐẾN PLAYER (Tốc độ 300)
+                        if Dist > 5 then
+                            -- Dùng CFrame thay vì Tween để không bị khóa nút di chuyển tay
+                            local nextPos = CFrame.new(Root.Position, TargetPos) * CFrame.new(0, 0, - (300 * task.wait()))
+                            LocalPlayer.Character:PivotTo(nextPos)
                         end
                         
-                        -- Tự động xả skill
+                        -- TỰ ĐỘNG XẢ SKILL
                         if Dist < 50 or LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                            -- Luôn nhìn về phía địch
+                            Root.CFrame = CFrame.new(Root.Position, EnemyRoot.Position)
                             ExecuteCombo(Enemy)
                         end
                         
@@ -275,21 +274,21 @@ local function StartAutoBounty()
                     until not IsValidTarget(Enemy)
                     
                     if BV then BV:Destroy() end
-                    if BG then BG:Destroy() end
                     if FoundTarget then break end
                 end
             end
 
-            -- LOGIC SAFE HOP (Giữ nguyên)
+            -- LOGIC HOP SERVER
             if not FoundTarget and Setting.Misc.AutoHopServer and not LocalPlayer.PlayerGui.Main.InCombat.Visible then
                 StatusText.Text = "Status: 🛫 Flying Up & Hopping..."
                 pcall(function() LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position.X, Setting.SafeZone["Teleport Y"], LocalPlayer.Character.HumanoidRootPart.Position.Z) end)
                 task.wait(2)
-                -- Gọi hàm SafeHop ở đây (như code full cũ)
+                -- (Hàm SafeHop giữ nguyên như cũ)
             end
         end
     end)
 end
+
 
 --------------------------------------------------------------------------------
 -- 7. EXECUTION
