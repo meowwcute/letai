@@ -140,14 +140,14 @@ end
 -- 4. GLOBAL FIX SYSTEM (CAMERA & MOVEMENT)
 --------------------------------------------------------------------------------
 local function GlobalFixSystem()
-    RunService.RenderStepped:Connect(function()
-        SafeCall(function()
+    RunService.Stepped:Connect(function()
+        pcall(function()
             if IsAlive(LocalPlayer) then
-                Camera.CameraType = Enum.CameraType.Custom
-                if LocalPlayer.Character.Humanoid.Sit then
-                    LocalPlayer.Character.Humanoid.Sit = false
+                if Camera.CameraType ~= Enum.CameraType.Custom then
+                    Camera.CameraType = Enum.CameraType.Custom
                 end
-                LocalPlayer.Character.Humanoid:Move(Vector3.new(0, 0, -1), true)
+                Camera.CameraSubject = LocalPlayer.Character.Humanoid
+                if LocalPlayer.Character.Humanoid.Sit then LocalPlayer.Character.Humanoid.Sit = false end
             end
         end)
     end)
@@ -213,12 +213,13 @@ end
 local StatusText = CreateStatusUI()
 
 --------------------------------------------------------------------------------
--- 6. MAIN LOGIC (START HUNT - FIX FLIGHT)
+-- 6. MAIN LOGIC (START HUNT - SPEED 300 & FIX FLIGHT)
 --------------------------------------------------------------------------------
 local function StartAutoBounty()
     local Setting = getgenv().Setting
     GlobalFixSystem()
 
+    -- Tự động chọn phe để kích hoạt kỹ năng
     local TeamName = (Setting["Team"] == "Pirate") and "Pirates" or "Marines"
     repeat 
         task.wait(0.5)
@@ -228,16 +229,22 @@ local function StartAutoBounty()
     task.spawn(function()
         while task.wait(0.5) do
             local FoundTarget = false
-            for _, Enemy in pairs(Players:GetPlayers()) do
+            -- Lấy danh sách người chơi và bắt đầu quét mục tiêu
+            local AllPlayers = Players:GetPlayers()
+            
+            for _, Enemy in pairs(AllPlayers) do
+                -- Kiểm tra nếu mục tiêu hợp lệ (đã fix không chọn người trong Safezone ở hàm IsValidTarget)
                 if Enemy ~= LocalPlayer and IsValidTarget(Enemy) then
                     FoundTarget = true
-                    StatusText.Text = "Status: ⚔️ Target -> " .. Enemy.Name
+                    StatusText.Text = "Status: ⚔️ Hunting -> " .. Enemy.Name
                     local HuntStart = tick()
                     
                     repeat
                         task.wait()
+                        -- Dừng săn nếu mình chết hoặc địch vào Safezone/thoát game
                         if not IsAlive(LocalPlayer) or not IsValidTarget(Enemy) or not Enemy.Parent then break end
 
+                        -- LOGIC HỒI MÁU (Nếu bạn bật SafeZone Healing trong Setting)
                         if LocalPlayer.Character.Humanoid.Health < Setting.SafeZone.LowHealth then
                             StatusText.Text = "Status: 🏥 Healing..."
                             LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position.X, Setting.SafeZone["Teleport Y"], LocalPlayer.Character.HumanoidRootPart.Position.Z)
@@ -245,29 +252,41 @@ local function StartAutoBounty()
                             break 
                         end
 
-                        -- FIX: Ép bay liên tục với tốc độ 350
+                        -- DI CHUYỂN ÁP SÁT VỚI TỐC ĐỘ 300 (FIX LỖI KHÔNG BAY)
                         local TargetCF = Enemy.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 4)
                         local Dist = (LocalPlayer.Character.HumanoidRootPart.Position - TargetCF.Position).Magnitude
+                        
+                        -- Ép Tween chạy liên tục mỗi Frame để bot không bao giờ bị khựng
                         TweenService:Create(LocalPlayer.Character.HumanoidRootPart, TweenInfo.new(Dist/300, Enum.EasingStyle.Linear), {CFrame = TargetCF}):Play()
 
-                        if not LocalPlayer.Character:FindFirstChild("HasBuso") then ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") end
+                        -- Bật Haki nếu chưa bật
+                        if not LocalPlayer.Character:FindFirstChild("HasBuso") then 
+                            ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") 
+                        end
                         
+                        -- Tự động tung chiêu khi khoảng cách đủ gần
                         if Dist < 40 or LocalPlayer.PlayerGui.Main.InCombat.Visible then
+                            -- Bật tộc V3/V4 nếu có trong Setting
                             if Setting["Race V3"].Enable then VirtualInputManager:SendKeyEvent(true, "T", false, game) end
                             if Setting["Race V4"].Enable and LocalPlayer.PlayerGui.Main.Awakening.Gauge.Size.X.Scale >= 1 then 
                                 VirtualInputManager:SendKeyEvent(true, "Y", false, game) 
                             end
+                            
+                            -- Thực hiện Combo kỹ năng và Dragon Soru
                             ExecuteCombo(Enemy)
                         end
 
+                        -- Chống kẹt một mục tiêu quá lâu (Target Time)
                         if (tick() - HuntStart) > Setting["Target Time"] then break end
                     until not IsValidTarget(Enemy)
+                    
+                    if FoundTarget then break end -- Sau khi xong 1 người thì quay lại quét danh sách mới
                 end
-                if FoundTarget then break end
             end
 
+            -- TỰ ĐỘNG ĐỔI SERVER NẾU KHÔNG CÒN AI ĐỂ SĂN
             if not FoundTarget and Setting.Misc.AutoHopServer and not LocalPlayer.PlayerGui.Main.InCombat.Visible then
-                StatusText.Text = "Status: 🌎 Hopping Server..."
+                StatusText.Text = "Status: 🌎 No Targets. Hopping..."
                 SafeCall(function()
                     local Servers = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
                     for _, s in pairs(Servers.data) do
@@ -282,6 +301,7 @@ local function StartAutoBounty()
         end
     end)
 end
+
 
 --------------------------------------------------------------------------------
 -- 7. EXECUTION
